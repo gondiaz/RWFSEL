@@ -3,14 +3,14 @@ import numpy  as np
 import tables as tb
 
 ## PARAMS
-run = 7435
-wf_dir     = f"/analysis/{run}/hdf5/data/"
-event_data = f"/home/shifter/gdiaz/WF_selector/DATA/de_events/DE_events_{run}.npy"
-out_dir    = f"/home/shifter/gdiaz/WF_selector/DATA/selected_rwfs/" 
+run = 6731
+wf_dir     = f"/home/gdiaz/DEMO++/DATA/{run}/waveforms/"
+event_data = f"/home/gdiaz/DEMO++/longitudinal/selected_events_{run}.npy"
+out_dir    = f"/home/gdiaz/DEMO++/DATA/{run}/selected_waveforms/"
 
 
 # WF FILES AND EVENTS
-wf_files   = glob.glob(wf_dir  + "/*trigger2*")
+wf_files   = glob.glob(wf_dir  + "/*")
 wf_files.sort()
 
 
@@ -18,50 +18,59 @@ wf_files.sort()
 events = np.load( event_data )
 
 
-## CREATE FILE TO SAVE RWFS AND EVENTS
-h5file = tb.open_file(out_dir + "/" + f"ds_rwfselection_{run}.h5", mode="w", title="DS selection")
-selrwfs_group    = h5file.create_group("/", "DS_RWFS")
-event_info_group = h5file.create_group("/",  "Events")
+def create_file(number):
+	## CREATE FILE TO SAVE RWFS AND EVENTS
+	h5file = tb.open_file(out_dir + "/" + f"run_{run}_{number}_selected.h5", mode="w", title="selected wfs")
+	selrwfs_group    = h5file.create_group("/", "RD")
+	event_info_group = h5file.create_group("/", "Run")
+	
+	PMTRWFs_Array  = h5file.create_earray(selrwfs_group, "pmtrwf",
+                              	tb.Int16Atom(), shape=(0, 3, 32000))
+	SIPMRWFs_Array = h5file.create_earray(selrwfs_group, "sipmrwf",
+                              	tb.Int16Atom(), shape=(0, 256, 800))
+	
+	class Event_Info(tb.IsDescription):
+		event = tb.Int32Col()
+		time  = tb.UInt64Col()
+	
+	Event_Info_table = h5file.create_table(event_info_group, "events", Event_Info, "selected events")
+	#EI = Event_Info_table.row
 
-PMTRWFs_Array  = h5file.create_earray(selrwfs_group, "pmtrwfs", 
-                                     tb.Int16Atom(), shape=(0, 12, 64000))
-SIPMRWFs_Array = h5file.create_earray(selrwfs_group, "sipmrwfs", 
-                                      tb.Int16Atom(), shape=(0, 1792, 1600)) 
-
-class Event_Info(tb.IsDescription):
-    event = tb.Int32Col()
-    time  = tb.UInt64Col()
-
-Event_Info_table = h5file.create_table(event_info_group, "Event_Time", Event_Info, "Event_Time")
-EI = Event_Info_table.row
-
+	return h5file, PMTRWFs_Array, SIPMRWFs_Array, Event_Info_table
 
 ## SELECT AND WRITE
 for file in wf_files:
-    WF_file = tb.open_file( file )
+	number = file.split("/")[-1].split("_")[2]
+	print(number, "/", len(wf_files) )
 
-    pmtrwfs = WF_file.root.RD.pmtrwf 
-    sipmwfs = WF_file.root.RD.sipmrwf
+	#create file for each wf file
+	h5file, PMTRWFs_Array, SIPMRWFs_Array, Event_Info_table = create_file(number)
+	EI = Event_Info_table.row
 
-    events_time = WF_file.root.Run.events.read()
-    events_in_file = events_time["evt_number"]
-    sel = np.in1d(events_in_file, events)
+	WF_file = tb.open_file( file )
 
-    if sel.any():
-        idxs = np.argwhere(sel).flatten()
+	pmtrwfs = WF_file.root.RD.pmtrwf
+	sipmwfs = WF_file.root.RD.sipmrwf
 
-        PMTRWFs_Array .append( pmtrwfs[idxs, :, :] )
-        SIPMRWFs_Array.append( sipmwfs[idxs, :, :] )
-        
-        for ev, t in events_time[idxs]:
-            EI["event"] = ev
-            EI["time"]  = t
-            EI.append()
-    
-    WF_file.close()
-    
-PMTRWFs_Array   .flush()
-SIPMRWFs_Array  .flush()
-Event_Info_table.flush()
+	events_time = WF_file.root.Run.events.read()
+	events_in_file = events_time["evt_number"]
+	sel = np.in1d(events_in_file, events)
 
-h5file.close()
+	if sel.any():
+		idxs = np.argwhere(sel).flatten()
+	
+		PMTRWFs_Array .append( pmtrwfs[idxs, :, :] )
+		SIPMRWFs_Array.append( sipmwfs[idxs, :, :] )
+	
+		for ev, t in events_time[idxs]:
+    			EI["event"] = ev
+    			EI["time"]  = t
+    			EI.append()
+	WF_file.close()
+
+
+	PMTRWFs_Array   .flush()
+	SIPMRWFs_Array  .flush()
+	Event_Info_table.flush()
+
+	h5file.close()
